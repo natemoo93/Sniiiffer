@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Sniiiffer settings</title>
+<style>
+  /* Palette borrowed from whatiiif (matches popup.html) */
+  :root{
+    --ink:#1a1814; --ink-mid:#4a4540; --ink-faint:#8a8480;
+    --accent:#7a3b1e; --accent-light:#c4886a; --accent-bg:#f5ede8;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font:13px/1.5 system-ui,Segoe UI,sans-serif; color:var(--ink);
+    background:var(--accent-bg); padding:1rem 1.2rem; min-width:360px; max-width:34rem;
+  }
+  h1{font-size:1rem; color:var(--accent); letter-spacing:.02em; margin-bottom:.2rem}
+  .lead{font-size:.82rem; color:var(--ink-mid); margin-bottom:.8rem}
+  label.choice{
+    display:flex; gap:.55rem; align-items:flex-start; cursor:pointer;
+    padding:.5rem .6rem; border:1px solid #e7dcd4; background:#fbf7f4; margin-bottom:.4rem;
+  }
+  label.choice:hover{border-color:var(--accent-light)}
+  label.choice input{margin-top:.2rem; accent-color:var(--accent)}
+  .choice b{font-weight:600}
+  .choice small{display:block; color:var(--ink-faint); font-size:.72rem}
+  .note{font-size:.72rem; color:var(--ink-faint); margin-top:.7rem}
+  #saved{font-size:.72rem; color:var(--accent); margin-left:.4rem}
+</style>
+</head>
+<body>
+  <h1>Sniiiffer settings</h1>
+  <p class="lead">What should a single click on the toolbar icon do?<span id="saved"></span></p>
+
+  <label class="choice"><input type="radio" name="clickAction" value="popup">
+    <span><b>Show the Sniiiffer panel</b> (default)
+    <small>Pick from the detected result with all actions, including deep scan.</small></span>
+  </label>
+  <label class="choice"><input type="radio" name="clickAction" value="highlight">
+    <span><b>Highlight a region</b>
+    <small>Overlays the page image so you can draw a box and get a shareable link.</small></span>
+  </label>
+  <label class="choice"><input type="radio" name="clickAction" value="copy-url">
+    <span><b>Copy the manifest URL</b>
+    <small>Copies the best-detected IIIF manifest URL to the clipboard.</small></span>
+  </label>
+  <label class="choice"><input type="radio" name="clickAction" value="copy-content-state">
+    <span><b>Copy IIIF Content State token</b>
+    <small>Page-aware: targets the page the viewer is showing when the URL says which one.</small></span>
+  </label>
+  <label class="choice"><input type="radio" name="clickAction" value="open-whatiiif">
+    <span><b>Open in whatiiif</b>
+    <small>Opens the detected manifest at whatiiif.com, on the page you were viewing.</small></span>
+  </label>
+
+  <p class="note">The Sniiiffer panel remains accessible by right-clicking.</p>
+
+  <script src="options.js"></script>
+</body>
+</html>
