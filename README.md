@@ -5,9 +5,9 @@ A browser extension that sniffs out IIIF manifests on the pages you visit. When 
 
 ## Highlighting a region
 
-**Highlight…** in the popup overlays the page you're on with the canvas image of the page you were viewing (same page-awareness as above). A **page field** in the toolbar shows which canvas is loaded and lets you correct it: type a number or use ‹ ›. That matters because page detection isn't always possible, so the overlay sometimes opens on page 1. A manually chosen page is indistinguishable from a detected one, since the canvas id, image, coordinate space and both share links are all rebuilt from it. Changing pages clears any drawn box on purpose because `xywh` is in absolute image pixels and canvases within one manifest often differ in size.
+**Highlight…** in the popup overlays the page you're on with the canvas image of the page you were viewing (same page-awareness as above). A **page field** in the toolbar shows which canvas is loaded and lets you correct it by entering the number or navigate forward/back. Page detection isn't always possible, so the overlay sometimes opens on page 1. A manually chosen page is indistinguishable from a detected one, since the canvas id, image, coordinate space and both share links are all rebuilt from it. 
 
-Drawing happens on Sniiiffer's own copy of the image, not over the host page's viewer: zoomable viewers render into a `<canvas>` whose pan/zoom transform is invisible from outside, so mapping screen pixels to canvas coordinates over the live viewer can't be done reliably. On the overlay's copy the mapping is exact: box position × the canvas's full-pixel dimensions If the site blocks the image from loading in the overlay, a one-click "Highlight in whatiiif instead" fallback opens the same page there.
+Drawing happens on Sniiiffer's own copy of the image, not over the host page's viewer. If the site blocks the image from loading in the overlay, a one-click "Highlight in whatiiif instead" fallback opens the same page there.
 
 ## Settings: what a click does
 
@@ -38,4 +38,4 @@ Carried over from whatiiif's heuristic resolver, deliberately:
 - `background.js`: badge management, deep scan, and the configurable toolbar-click actions.
 - `popup.html` / `popup.js`: results UI (Copy URL / Open in whatiiif / Highlight / Deep scan).
 - `options.html` / `options.js`: the single-click behavior setting (`chrome.storage.sync`).
-- `highlight.js`: the region-drawing overlay, injected into the tab on demand (popup button or direct click action), always together with `common/detect.js`. An injected file gets its own top-level scope even in the isolated world the content script already occupies, so it cannot see that copy; detect.js publishes the three helpers the overlay needs (`buildCanvasContentState`, `buildWhatiiifHighlightUrl`, `WHATIIIF_BASE`) on `globalThis` for it, and the overlay throws up front if they're missing rather than failing mid-drag.
+- `highlight.js`: the region-drawing overlay, injected into the tab on demand (popup button or direct click action), always together with `common/detect.js`. An injected file gets its own top-level scope even in the isolated world the content script already occupies, so it cannot see that copy; detect.js publishes the three helpers the overlay needs (`buildCanvasContentState`, `buildWhatiiifHighlightUrl`, `WHATIIIF_BASE`) on `globalThis` for it, and the overlay throws up front if they're missing.
