@@ -5,7 +5,7 @@ A browser extension that sniffs out IIIF manifests on the pages you visit. When 
 
 ## Highlighting a region
 
-**Highlight…** in the popup overlays the page you're on with the canvas image of the page you were viewing (same page-awareness as above). A **page field** in the toolbar shows which canvas is loaded and lets you correct it by entering the number or navigate forward/back. Page detection isn't always possible, so the overlay sometimes opens on page 1. A manually chosen page is indistinguishable from a detected one, since the canvas id, image, coordinate space and both share links are all rebuilt from it. 
+**Highlight…** in the popup overlays the item manifest you're viewing with the canvas image of the page you were viewing when page awareness is supported. A **page field** in the toolbar shows which canvas is loaded and lets you correct it by entering the number or navigate forward/back. Page detection isn't always possible, so the overlay sometimes opens on page 1. A manually chosen page is indistinguishable from a detected one, since the canvas id, image, coordinate space and both share links are all rebuilt from it. 
 
 Drawing happens on Sniiiffer's own copy of the image, not over the host page's viewer. If the site blocks the image from loading in the overlay, a one-click "Highlight in whatiiif instead" fallback opens the same page there.
 
