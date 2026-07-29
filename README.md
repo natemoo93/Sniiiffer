@@ -1,8 +1,7 @@
 # Sniiiffer
 
-A browser extension that sniffs out IIIF manifests on the pages you visit. When one is detected, the toolbar icon shows a quiet badge: no popups, no notifications. Click the icon to copy the manifest URL, open it in [whatiiif](https://whatiiif.com), or highlight a region right there on the page.
+A browser extension that sniffs out IIIF manifests on the pages you visit. When one is detected, the toolbar dog icon (a mastiiiff) shows a badge, and upon clicking the the user can copy the manifest URL, open it in [whatiiif](https://whatiiif.com), or highlight a region and generate a link/content state token right there on the page.
 
-Content State tokens come from the highlight overlay, not the popup since a token is only worth sharing when it targets a page you've confirmed, and the overlay's page field guarantees that.
 
 ## Highlighting a region
 
