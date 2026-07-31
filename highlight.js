@@ -69,6 +69,31 @@
     var dragStart = null;
     var currentToken = '', currentLink = '';
 
+    /* ── rotation (view only) ──
+       A CSS transform on the image; xywh is always computed in the canvas's own
+       UNROTATED pixel space, so rotating never changes what a saved region
+       means. That makes the pointer math the whole problem: getBoundingClientRect
+       returns the AXIS-ALIGNED box after transform, so at 90/270 its width and
+       height are swapped and a raw fraction is measured against the wrong axes.
+       Verified: a pointer that is truly at (0.125, 0.833) of the image reads as
+       (0.167, 0.125) if taken naively, so unrotatePoint undoes the rotation
+       before anything becomes sel.
+       There is NO matching transform on the way out: the box element is a child
+       of the rotated wrap, so it inherits the transform and its percentage
+       coordinates are already in sel's space. See renderBox. */
+    var rot = 0;
+
+    // (fx, fy) are fractions of the ROTATED screen bbox; returns fractions of
+    // the unrotated image.
+    function unrotatePoint(fx, fy) {
+      switch (rot) {
+        case 90:  return { x: fy, y: 1 - fx };
+        case 180: return { x: 1 - fx, y: 1 - fy };
+        case 270: return { x: 1 - fy, y: fx };
+        default:  return { x: fx, y: fy };
+      }
+    }
+
     /* ── skeleton ── */
     var overlay = el('div', 'position:fixed;inset:0;z-index:2147483646;background:rgba(26,24,20,.82);' +
       'display:flex;flex-direction:column;font:' + FONT + ';color:' + INK + ';');
@@ -81,9 +106,11 @@
       'Drag a box over the region you want to highlight'));
 
     /* ── page picker ──
-       The viewer's open page can't always be detected (Mirador/Clover keep it
-       in JS state, and landing pages have none), so the overlay opens on
-       page 1. This lets the user correct it by hand. Everything downstream —
+       The viewer's open page can't always be detected (landing pages have
+       none; Mirador/Clover keep it in JS state and are inferred from the
+       rendered image, which yields nothing on a multi-window workspace), so
+       the overlay sometimes opens on page 1. This lets the user correct it by
+       hand. Everything downstream —
        the content-state token, the whatiiif link, the image, the coordinate
        space — is rebuilt from the chosen canvas, so a manually-set page is
        indistinguishable from a detected one. */
@@ -108,6 +135,21 @@
     // Only offer the control when we actually have canvases to switch between
     if (pages && total > 1) bar.appendChild(pageWrap);
 
+    /* Rotate controls. View only — the drawn region is stored in unrotated
+       image space either way (see unrotatePoint), so rotating never changes an
+       existing selection's coordinates or the tokens built from them. */
+    var rotWrap = el('div', 'display:flex;align-items:center;gap:5px;color:' + INK_MID + ';font-size:.8rem;');
+    var rotLeft = el('button', btnStyle() + 'padding:2px 7px;', '↺');
+    var rotRight = el('button', btnStyle() + 'padding:2px 7px;', '↻');
+    var rotVal = el('span', 'color:' + INK_FAINT + ';min-width:2.4rem;text-align:center;', '0°');
+    rotLeft.title = 'Rotate view left';
+    rotRight.title = 'Rotate view right';
+    rotWrap.appendChild(el('span', '', 'Rotate'));
+    rotWrap.appendChild(rotLeft);
+    rotWrap.appendChild(rotVal);
+    rotWrap.appendChild(rotRight);
+    bar.appendChild(rotWrap);
+
     var closeBtn = el('button', btnStyle() + 'padding:3px 12px;', '✕ Close (Esc)');
     bar.appendChild(closeBtn);
     overlay.appendChild(bar);
@@ -124,8 +166,22 @@
     wrap.appendChild(img);
     wrap.appendChild(box);
     wrap.appendChild(draw);
+    /* Facing page on a paged manifest. It sits BESIDE wrap, never inside it:
+       the drawn box is measured against img's own rect, so another image within
+       wrap would shift every coordinate. Not drawable — clicking it pages there,
+       and then it is the selected canvas and can be drawn on normally. */
+    var facingBefore = el('img', 'display:none;max-width:28vw;max-height:calc(100vh - 130px);' +
+      'opacity:.6;cursor:pointer;background:#fff;align-self:center;');
+    var facingAfter = el('img', 'display:none;max-width:28vw;max-height:calc(100vh - 130px);' +
+      'opacity:.6;cursor:pointer;background:#fff;align-self:center;');
+    facingBefore.draggable = false; facingAfter.draggable = false;
+    facingBefore.title = facingAfter.title = 'Go to this page';
+    var spread = el('div', 'display:flex;gap:8px;align-items:center;justify-content:center;');
+    spread.appendChild(facingBefore);
+    spread.appendChild(wrap);
+    spread.appendChild(facingAfter);
     stage.appendChild(loading);
-    stage.appendChild(wrap);
+    stage.appendChild(spread);
     overlay.appendChild(stage);
 
     /* ── result panel (caption + live links), positioned under the drawn box ── */
@@ -206,7 +262,13 @@
       if (!region) return;
       var label = cap.value.trim() || null;
       currentToken = buildCanvasContentState(cfg.manifestUrl, cfg.canvasId, region, label);
-      currentLink = buildWhatiiifHighlightUrl(cfg.manifestUrl, cfg.canvasIndex, region, label, cfg.svcBase || null);
+      // rot travels with the link so the landing page shows the page the same
+      // way up the region was drawn. Presentational only — region above is
+      // already in unrotated canvas pixels, so the link means the same thing
+      // at any angle. The Content State token deliberately carries no
+      // rotation: it is an interop format for other viewers, and orientation
+      // is not part of what it describes.
+      currentLink = buildWhatiiifHighlightUrl(cfg.manifestUrl, cfg.canvasIndex, region, label, cfg.svcBase || null, rot);
       csRow.val.textContent = currentToken;
       csRow.val.title = currentToken;
       wiRow.val.textContent = currentLink;
@@ -217,11 +279,16 @@
        pinned to the viewport bottom as a last resort ── */
     function positionPanel() {
       if (!sel || panel.style.display === 'none') return;
-      var wr = wrap.getBoundingClientRect();
+      /* Anchor to the drawn box's real screen rect rather than deriving one
+         from sel: sel is in unrotated image space while wrap's rect is the
+         rotated screen bbox, so mixing them put the panel on the wrong edge
+         once the page was turned. The browser has already laid the box out
+         under the transform, so its rect is correct at every angle. */
+      var wr = box.getBoundingClientRect();
       var pw = panel.offsetWidth, ph = panel.offsetHeight;
-      var left = clamp(wr.left + sel.x * wr.width, 12, Math.max(12, window.innerWidth - pw - 12));
-      var top = wr.top + (sel.y + sel.h) * wr.height + 10;
-      if (top + ph > window.innerHeight - 12) top = wr.top + sel.y * wr.height - ph - 10;
+      var left = clamp(wr.left, 12, Math.max(12, window.innerWidth - pw - 12));
+      var top = wr.bottom + 10;
+      if (top + ph > window.innerHeight - 12) top = wr.top - ph - 10;
       if (top < 12) top = Math.max(12, window.innerHeight - ph - 12);
       panel.style.left = left + 'px';
       panel.style.top = top + 'px';
@@ -236,6 +303,16 @@
     function renderBox() {
       if (!sel) { box.style.display = 'none'; return; }
       box.style.display = 'block';
+      /* sel is used DIRECTLY, with no rotation applied. `box` is a child of
+         `wrap`, and `wrap` is the element carrying the CSS transform, so the
+         box's percentage coordinates are already in wrap's LOCAL (unrotated)
+         space — the same space sel lives in — and the browser rotates the box
+         along with the image for free. Mapping sel through rotateRect here
+         rotated it a SECOND time on top of the transform, which is what made a
+         drag look like it landed on the unrotated page.
+         The input path is genuinely asymmetric: the pointer arrives in SCREEN
+         space and getBoundingClientRect gives the rotated screen bbox, so
+         unrotatePoint is still required there. */
       box.style.left = (sel.x * 100) + '%';
       box.style.top = (sel.y * 100) + '%';
       box.style.width = (sel.w * 100) + '%';
@@ -246,7 +323,11 @@
       e.preventDefault();
       draw.setPointerCapture(e.pointerId);
       var r = draw.getBoundingClientRect();
-      dragStart = { x: clamp((e.clientX - r.left) / r.width, 0, 1), y: clamp((e.clientY - r.top) / r.height, 0, 1) };
+      // Un-rotate before storing: getBoundingClientRect is the axis-aligned box
+      // AFTER transform, so raw fractions are measured against swapped axes at
+      // 90/270 and would silently record the wrong region.
+      dragStart = unrotatePoint(clamp((e.clientX - r.left) / r.width, 0, 1),
+                               clamp((e.clientY - r.top) / r.height, 0, 1));
       sel = { x: dragStart.x, y: dragStart.y, w: 0, h: 0 };
       panel.style.display = 'none';
       renderBox();
@@ -254,8 +335,9 @@
     draw.addEventListener('pointermove', function (e) {
       if (!dragStart) return;
       var r = draw.getBoundingClientRect();
-      var cx = clamp((e.clientX - r.left) / r.width, 0, 1);
-      var cy = clamp((e.clientY - r.top) / r.height, 0, 1);
+      var cur = unrotatePoint(clamp((e.clientX - r.left) / r.width, 0, 1),
+                              clamp((e.clientY - r.top) / r.height, 0, 1));
+      var cx = cur.x, cy = cur.y;
       sel = {
         x: Math.min(dragStart.x, cx), y: Math.min(dragStart.y, cy),
         w: Math.abs(cx - dragStart.x), h: Math.abs(cy - dragStart.y)
@@ -266,7 +348,12 @@
       if (!dragStart) return;
       dragStart = null;
       var r = draw.getBoundingClientRect();
-      if (!sel || sel.w * r.width < 8 || sel.h * r.height < 8) {
+      // sel is unrotated but r is the rotated bbox, so at 90/270 the axes are
+      // swapped — compare each fraction against the screen extent it actually
+      // spans, or a thin drag would be misjudged as a click (and vice versa).
+      var selScrW = (rot === 90 || rot === 270) ? r.height : r.width;
+      var selScrH = (rot === 90 || rot === 270) ? r.width : r.height;
+      if (!sel || sel.w * selScrW < 8 || sel.h * selScrH < 8) {
         sel = null; // a click, not a drag
         renderBox();
         return;
@@ -285,6 +372,52 @@
        fractions were measured against the old page and its pixel coordinates
        are meaningless on a different canvas — silently carrying it over would
        emit a plausible-looking but wrong region. */
+    /* Apply the current rotation. The transform goes on `wrap`, so the drawn
+       box (a child, positioned in %) rides along with the image and the two
+       can never drift apart. The stage re-centres because the rotated
+       footprint has different bounds at 90/270. */
+    function applyRot() {
+      wrap.style.transform = rot ? ('rotate(' + rot + 'deg)') : '';
+      wrap.style.transformOrigin = 'center center';
+      rotVal.textContent = rot + '°';
+      // Keep the rotated page inside the viewport: at 90/270 the footprint's
+      // width and height swap, so the img's max-* caps (written for the
+      // unrotated orientation) no longer bound what's on screen.
+      var swap = (rot === 90 || rot === 270);
+      img.style.maxWidth = swap ? 'calc(100vh - 130px)' : 'calc(100vw - 48px)';
+      img.style.maxHeight = swap ? 'calc(100vw - 48px)' : 'calc(100vh - 130px)';
+      renderBox();
+      // Rebuild the links: rot is part of the whatiiif URL, so an existing
+      // selection's link is stale the moment the page is turned.
+      if (sel) { update(); showPanel(); }
+    }
+    rotLeft.addEventListener('click', function () { rot = (rot + 270) % 360; applyRot(); });
+    rotRight.addEventListener('click', function () { rot = (rot + 90) % 360; applyRot(); });
+
+    /* Facing page for the current spread. cfg.spreads[i] is the display-order
+       index list resolved against the manifest in actions.js; length < 2 means
+       this page stands alone (unpaged manifest, cover, or a two-up scan). */
+    function renderFacing() {
+      facingBefore.style.display = 'none';
+      facingAfter.style.display = 'none';
+      var spreads = cfg.spreads;
+      if (!spreads || !pages) return;
+      var pair = spreads[curIdx];
+      if (!pair || pair.length < 2) return;
+      var otherIdx = (pair[0] === curIdx) ? pair[1] : pair[0];
+      var p = pages[otherIdx];
+      if (!p || !p.imageUrls || !p.imageUrls.length) return;
+      var target = (pair[0] === otherIdx) ? facingBefore : facingAfter;
+      target.src = p.imageUrls[0];
+      target.alt = 'Facing page ' + (otherIdx + 1);
+      target.title = 'Go to page ' + (otherIdx + 1);
+      target.onclick = function () { setPage(otherIdx + 1); };
+      // Only reveal once it actually loads — a broken facing image should
+      // leave the single-page view rather than show a torn icon next to it.
+      target.onload = function () { target.style.display = ''; };
+      target.onerror = function () { target.style.display = 'none'; };
+    }
+
     function setPage(n) {
       if (!pages || !total) return;
       var i = Math.max(0, Math.min(total - 1, (parseInt(n, 10) || 1) - 1));
@@ -312,6 +445,7 @@
       loading.textContent = 'Loading page image…';
       loading.style.display = '';
       img.src = cfg.imageUrls[0] || '';
+      renderFacing();
       prevBtn.disabled = (curIdx === 0);
       nextBtn.disabled = (curIdx === total - 1);
     }
@@ -348,6 +482,7 @@
       loading.appendChild(alt);
     });
     img.src = cfg.imageUrls[0];
+    renderFacing();
 
     /* ── lifecycle ── */
     function onKey(e) {

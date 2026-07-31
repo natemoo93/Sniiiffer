@@ -66,6 +66,74 @@
     });
   }
 
+  /* ── DOM page hint: Mirador and Clover ──
+     Both keep the open canvas in JS state (Redux / React) with nothing in the
+     URL, so extractPageHint can't see it. Neither state store is reachable
+     from the isolated world either. What IS readable is what they render:
+     Image API URLs in <img src> and in OSD's tile images. The service base of
+     the displayed image identifies the canvas, and resolveHintIndex matches it
+     against the manifest (imgServiceBase arm).
+
+     Deliberately conservative, in the spirit of extractPageHint's URL rules:
+     - Only runs when the page looks like Mirador or Clover. A generic
+       "biggest IIIF image on the page" rule would fire on gallery and search
+       pages, where the largest thumbnail is not an open canvas.
+     - Returns null on disagreement rather than picking one. On a Mirador
+       multi-window workspace, or mid-transition between pages, several
+       canvases are legitimately on screen; a wrong page is worse than none. */
+
+  // An Image API URL ends {region}/{size}/{rotation}/{quality}.{fmt} — strip
+  // exactly those four to get the service base. Same anchoring as detect.js's
+  // IMG_API_TAIL (kept local: this reads DOM strings, not manifest nodes).
+  const DOM_IMG_API_TAIL = /^(https?:\/\/.+?)\/[^\/]+\/[^\/]+\/[^\/]+\/[^\/]+\.[a-z]+(?:[?#]|$)/i;
+
+  function serviceBaseOfImageUrl(u) {
+    const s = String(u || '');
+    // info.json also has four trailing segments and would match the tail
+    // pattern, yielding a truncated garbage base. It never matches a real
+    // canvas, but it counts as a distinct base and would suppress an
+    // otherwise-good hint in domPageHint's single-canvas check.
+    if (/\/info\.json([?#]|$)/i.test(s)) return null;
+    const m = s.match(DOM_IMG_API_TAIL);
+    return m ? m[1].replace(/\/+$/, '') : null;
+  }
+
+  // Mirador renders into OSD canvases but keeps <img> tiles in the DOM; Clover
+  // (also OSD-based) does the same. Both also emit thumbnail strips, which are
+  // Image API URLs for OTHER canvases — those must not be read as the open
+  // page, so thumbnail containers are excluded by selector.
+  function isMiradorOrClover() {
+    if (document.querySelector('[class*="mirador" i], #mirador, [data-mirador], .mirador-viewer')) return true;
+    if (document.querySelector('[class*="clover" i], [data-clover], #clover-iiif, .clover-viewer')) return true;
+    return false;
+  }
+
+  function domPageHint() {
+    try {
+      if (!isMiradorOrClover()) return null;
+      // Exclude thumbnail/navigation regions: their images are other canvases.
+      const EXCLUDE = '[class*="thumb" i],[class*="Thumb"],[class*="gallery" i],' +
+                      '[class*="nav" i],[class*="filmstrip" i],[class*="strip" i],' +
+                      '[role="navigation"],[class*="sidebar" i]';
+      const bases = {};
+      const imgs = document.querySelectorAll('img[src*="/full/"], img[src*="/default."], canvas + img, .openseadragon-canvas img');
+      for (let i = 0; i < imgs.length; i++) {
+        const el = imgs[i];
+        if (el.closest && el.closest(EXCLUDE)) continue;
+        // Skip tiny images: OSD keeps low-res placeholder tiles around, but so
+        // do thumbnails that dodged the selector filter above.
+        const w = el.naturalWidth || el.width || 0;
+        if (w && w < 200) continue;
+        const b = serviceBaseOfImageUrl(el.currentSrc || el.src);
+        if (b) bases[b] = (bases[b] || 0) + 1;
+      }
+      const keys = Object.keys(bases);
+      // Exactly one distinct canvas on screen, or nothing usable.
+      if (keys.length !== 1) return null;
+      return { imgServiceBase: keys[0] };
+    } catch (e) { return null; }
+  }
+
   function report() {
     let results = [];
     try { results = passiveScan(); } catch (e) { results = []; }
@@ -75,8 +143,10 @@
         pageUrl: location.href,
         results: results,
         // this frame's page hint — in an embedded UV iframe, location.href
-        // carries the live #?cv= the top page never sees
-        hint: extractPageHint(location.href)
+        // carries the live #?cv= the top page never sees. URL hints win over
+        // the DOM read: a URL convention is an explicit page position, while
+        // the DOM hint is inferred from what happens to be rendered.
+        hint: extractPageHint(location.href) || domPageHint()
       });
     } catch (e) {} // extension reloaded/disabled — nothing to do
     return results;
@@ -86,6 +156,14 @@
   // (allFrames) calling this — a plain onMessage responder can't aggregate
   // across frames (only the first frame's response would win).
   globalThis.__sniiifferScan = passiveScan;
+  // The popup's fresh rescan needs the hint too, and the DOM arm of it lives
+  // here rather than in detect.js (which is DOM-free by contract). Without
+  // this the popup would fall back to extractPageHint alone and lose the
+  // Mirador/Clover hint — which is exactly the case that changes most often,
+  // since the user can page the viewer between the passive scan and the click.
+  globalThis.__sniiifferHint = function () {
+    try { return extractPageHint(location.href) || domPageHint(); } catch (e) { return null; }
+  };
 
   // Initial scan, plus one delayed rescan for SPAs that render after idle.
   // No MutationObserver: a persistent observer on every page costs more than

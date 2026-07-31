@@ -178,6 +178,11 @@ async function highlightConfigFor(manifestUrl, hint) {
       svcBase: getServiceBase(c) || null
     };
   });
+  /* Spread pairing resolved here, not in the overlay: spreadFor needs the
+     manifest (behavior:"paged", viewingDirection, per-canvas non-paged) and
+     the overlay only ever sees this config. One entry per canvas so paging
+     doesn't need a re-resolve. Display only — see spreadFor in detect.js. */
+  const spreads = canvases.map(function (_, i) { return spreadFor(mj, i, canvases); });
   return {
     manifestUrl: url,
     canvasId: canvasId,
@@ -188,7 +193,8 @@ async function highlightConfigFor(manifestUrl, hint) {
     cH: dims.cH,
     svcBase: getServiceBase(canvas) || null,
     pageCount: canvases.length,
-    pages: pages
+    pages: pages,
+    spreads: spreads
   };
 }
 

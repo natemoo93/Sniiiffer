@@ -7,7 +7,13 @@
      guesses, and validation of every candidate. Network happens HERE only,
      and only on a user gesture, capped at SNIIIFFER_PROBE_CAP probes. */
 
-importScripts('common/detect.js', 'common/actions.js');
+/* Chrome runs this as a service worker and pulls the shared modules in here.
+   Firefox runs it as an MV3 event page, which has no importScripts — there
+   manifest.firefox.json lists detect.js/actions.js ahead of this file instead,
+   so they are already in scope by the time this runs. */
+if (typeof importScripts === 'function') {
+  importScripts('common/detect.js', 'common/actions.js');
+}
 
 const BADGE_COLOR_FOUND = '#7a3b1e';     // whatiiif accent
 const BADGE_COLOR_CANDIDATE = '#8a8480'; // whatiiif ink-faint
@@ -236,7 +242,8 @@ function scanFrames(tabId) {
           return {
             url: location.href,
             results: typeof __sniiifferScan === 'function' ? __sniiifferScan() : [],
-            hint: typeof extractPageHint === 'function' ? extractPageHint(location.href) : null
+            hint: typeof __sniiifferHint === 'function' ? __sniiifferHint()
+              : (typeof extractPageHint === 'function' ? extractPageHint(location.href) : null)
           };
         } catch (e) { return null; }
       }

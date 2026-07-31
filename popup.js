@@ -281,7 +281,8 @@
             return {
               url: location.href,
               results: typeof __sniiifferScan === 'function' ? __sniiifferScan() : [],
-              hint: typeof extractPageHint === 'function' ? extractPageHint(location.href) : null
+              hint: typeof __sniiifferHint === 'function' ? __sniiifferHint()
+                : (typeof extractPageHint === 'function' ? extractPageHint(location.href) : null)
             };
           } catch (e) { return null; }
         }

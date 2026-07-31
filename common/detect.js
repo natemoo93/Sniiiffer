@@ -63,13 +63,16 @@ function buildCanvasContentState(manifestUrl, canvasId, xywh, label) {
 }
 
 // whatiiif's own share-link form for a highlighted region — byte-identical to
-// what its updateUrl() generates (?manifest=&canvas=&xywh=[&label=][&svc=]).
+// what its updateUrl() generates (?manifest=&canvas=&xywh=[&label=][&svc=][&rot=]).
 // svc lets whatiiif render the highlight even when the manifest itself is
-// proxy-blocked there.
-function buildWhatiiifHighlightUrl(manifestUrl, canvasIdx, xywh, label, svcBase) {
+// proxy-blocked there. rot carries the orientation the region was drawn at, so
+// the landing page shows the page the same way up; it is presentational only —
+// xywh is always in the canvas's unrotated pixel space — and is omitted at 0°.
+function buildWhatiiifHighlightUrl(manifestUrl, canvasIdx, xywh, label, svcBase, rot) {
   const p = new URLSearchParams({ manifest: manifestUrl, canvas: String(canvasIdx), xywh: xywh });
   if (label) p.set('label', label);
   if (svcBase) p.set('svc', svcBase);
+  if (rot) p.set('rot', String(rot));
   return WHATIIIF_BASE + '/?' + p.toString();
 }
 
@@ -137,6 +140,58 @@ function getCanvases(m) {
   return m.items || [];
 }
 
+/* ── two-page spreads ──
+   A bound volume is displayed two pages at a time. IIIF says so with
+   behavior:"paged" on the manifest (v3) or viewingHint:"paged" (v2) — we do
+   NOT infer it: single-sheet material (maps, photographs, broadsides) is
+   multi-canvas too, and pairing those is wrong.
+
+   The pairing rule is from the Presentation API: the first canvas stands alone
+   (it is the cover / first recto), then canvases pair up 1-2, 3-4, 5-6. A
+   canvas may opt out with its own behavior:"non-paged", which is how
+   already-two-up scans (fold-outs) are meant to be marked.
+
+   DISPLAY ONLY. A selection's xywh lives in one canvas's own pixel space, and
+   paired canvases do not share dimensions (measured on real scans: 6545 vs
+   6538 high in one pair, and no pair matched exactly). There is no shared
+   coordinate space for a spread, so a box is always stored against a single
+   canvas. Spreads change what the user SEES, never what gets recorded. */
+function isPagedManifest(m) {
+  if (!m) return false;
+  const b = m.behavior || m.viewingHint;
+  const arr = Array.isArray(b) ? b : [b];
+  return arr.indexOf('paged') !== -1;
+}
+
+function isNonPagedCanvas(c) {
+  if (!c) return false;
+  const b = c.behavior || c.viewingHint;
+  const arr = Array.isArray(b) ? b : [b];
+  return arr.indexOf('non-paged') !== -1 || arr.indexOf('facing-pages') !== -1;
+}
+
+/* The spread containing canvas `idx`, as an array of indices in display order
+   (left to right, or right to left for viewingDirection right-to-left).
+   Returns a single-element array whenever pairing doesn't apply, so callers
+   can treat every view as "a list of canvases to show" without branching. */
+function spreadFor(m, idx, canvases) {
+  const cvs = canvases || getCanvases(m);
+  if (!cvs.length) return [];
+  const i = Math.max(0, Math.min(idx | 0, cvs.length - 1));
+  if (!isPagedManifest(m)) return [i];
+  if (i === 0) return [0];                       // cover stands alone
+  if (isNonPagedCanvas(cvs[i])) return [i];      // already a two-up scan
+  // Pairs are (1,2), (3,4), … — odd index is the left page of its pair.
+  const left = (i % 2 === 1) ? i : i - 1;
+  const right = left + 1;
+  if (right >= cvs.length) return [left];
+  // A neighbour that opts out breaks the pair rather than joining it.
+  if (isNonPagedCanvas(cvs[left]) || isNonPagedCanvas(cvs[right])) return [i];
+  const pair = [left, right];
+  const dir = m.viewingDirection || '';
+  return dir === 'right-to-left' ? [right, left] : pair;
+}
+
 // Collections have sub-manifests, not canvases — whatiiif (and most viewers)
 // can't render them directly. collectionManifests lists the volume URLs
 // (v2 manifests / v3 items), unwrapCollection is the volume-1 policy.
@@ -189,6 +244,28 @@ function resolveHintIndex(hint, canvases) {
       if (String(canvasIdOf(canvases[k]) || '').indexOf(needle) !== -1) return k;
     }
     return -1;
+  }
+  /* Image-API hint (Mirador, Clover): these viewers keep the open canvas in
+     JS state — Redux / React — which an isolated-world content script cannot
+     read, and neither puts it in the URL. What they DO expose is the rendered
+     image: every tile and thumbnail they request is an Image API URL, and an
+     Image API URL always begins with the canvas's service base. So the
+     service base of a rendered image identifies the canvas, and getServiceBase
+     gives us the same value from the manifest side.
+     Matched exactly, not by substring: service bases in one manifest routinely
+     share a long prefix (…/iiif/2/book%2F0011 vs …%2F0111), and a prefix test
+     picks the wrong page. Ambiguity is resolved as no-hint, never a guess. */
+  if (hint.imgServiceBase) {
+    const want = String(hint.imgServiceBase).replace(/\/+$/, '');
+    let hitIdx = -1;
+    for (let k = 0; k < canvases.length; k++) {
+      const b = getServiceBase(canvases[k]);
+      if (!b) continue;
+      if (String(b).replace(/\/+$/, '') !== want) continue;
+      if (hitIdx !== -1) return -1; // two canvases share a base — can't disambiguate
+      hitIdx = k;
+    }
+    return hitIdx;
   }
   if (!hint.canvasId) return -1;
   let i;
@@ -355,6 +432,12 @@ function figgyConcernType(type) {
   return /s$/.test(slug) ? slug : slug + 's';
 }
 
+/* BookReader path keywords that follow /details/{item} directly. Anything else
+   in that position is a file name inside a multi-file item. Kept as one
+   anchored list so the IA handler and extractPageHint agree on what a "file"
+   segment is. */
+const IA_READER_SEGMENTS = /^(?:page|mode|search|theater|1up|2up|thumb|fullscreen)$/i;
+
 /* ── PLATFORMS — URL pattern → manifest URL.
    Order matters: first match wins (same contract as whatiiif). Sync resolvers
    are pure (safe in the content script, zero network); async ones fetch and
@@ -419,14 +502,34 @@ const PLATFORMS = [
     }
   },
 
-  // Internet Archive
+  /* Internet Archive.
+     Two shapes. /details/{item} is the normal case: iiif.archive.org mints a
+     manifest per item and it is correct.
+     /details/{item}/{file} names one work inside a MULTI-FILE item (a single
+     item can bundle dozens of issues of one periodical as separate file sets).
+     For those, IA's item manifest is not just wrong for the requested file, it
+     is internally inconsistent — verified 2026-07-30 on a 30-issue item: its
+     label described the whole collection, all 102 canvases came from one
+     issue, and rendering/seeAlso pointed at a third file. Returning it yields a confident,
+     shareable highlight of the WRONG work, which is how this was found (right
+     page number, wrong issue). whatiiif's /ia-manifest route synthesizes a
+     correct manifest from the Image API instead; see the Worker for why that
+     is sound and why it is server-side.
+     The second segment is only a file when it is not a BookReader keyword:
+     /page/nN, /mode/2up, /search/… all follow the item directly. */
   {
     name: 'Internet Archive',
-    pattern: /archive\.org\/details\/([^\/\?]+)/,
+    pattern: /archive\.org\/details\/([^\/\?#]+)/,
     resolve: function (url) {
-      const m = url.match(/archive\.org\/details\/([^\/\?#]+)/);
+      const m = url.match(/archive\.org\/details\/([^\/\?#]+)(?:\/([^\/\?#]+))?/);
       if (!m) return null;
-      return 'https://iiif.archive.org/iiif/' + m[1] + '/manifest.json';
+      const item = m[1];
+      const seg2 = m[2] ? decodeURIComponent(m[2]) : '';
+      if (seg2 && !IA_READER_SEGMENTS.test(seg2)) {
+        return WHATIIIF_BASE + '/ia-manifest?item=' + encodeURIComponent(item) +
+               '&file=' + encodeURIComponent(seg2);
+      }
+      return 'https://iiif.archive.org/iiif/' + item + '/manifest.json';
     }
   },
 
